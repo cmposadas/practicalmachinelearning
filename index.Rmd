@@ -1,0 +1,181 @@
+---
+title: "PML Course Project"
+author: "Christian Posadas"
+date: "February 11, 2016"
+output: html_document
+---
+Predicting Exercise Techniques
+========================================================
+by Christian Posadas
+
+```{r setup, cache = F, echo = F, message = F, warning = F, tidy = F}
+# make this an external chunk that can be included in any file
+library(knitr)
+options(width = 100)
+opts_chunk$set(message = F, error = F, warning = F, comment = NA, fig.align = 'center', dpi = 100, tidy = F, cache=TRUE, cache.path = '.cache/', fig.path = 'fig/')
+
+options(xtable.type = 'html')
+knit_hooks$set(inline = function(x) {
+  if(is.numeric(x)) {
+    round(x, getOption('digits'))
+  } else {
+    paste(as.character(x), collapse = ', ')
+  }
+})
+knit_hooks$set(plot = knitr:::hook_plot_html)
+```
+GOAL: The goal of this analysis is to predict the manner in which a participant did a specific exercise using data from accelerometers on 6 participants.
+
+FEATURES: Before I initialized the model algorithms, I did some basic feature manipulations to improve the modeling process including:
+
+* Removing observations where new_window = 'yes' as these appear to be just summaries of prior observations
+* Removing index, username and timestamp type fields as they are not appropriate predictors
+* Removing zero / near-zero predictors as they are also not useful predictors
+
+DATA PARTITION: The dataset was also split into a training, testing and validation set via a 60 / 20 / 20 split -- I determined that the dataset was large enough to accommodate both a testing and validation set (ie: the dataset contains almost 20,000 records).
+
+CROSS VALIDATION: The cross validation technique I will be using is K-folds where K = 5 and is repeated 3 times. 
+
+* The advantage of using the K-folds cross validation technique is that every single observation in the training set will be used for both training and validation. 
+* While the default number of folds to use in this CV technique is 10, I used 5 since the dataset is relatively large and using less folds should speed up the model computations and also, since the dataset is large, the model results should still be quite stable. 
+* Lastly, to ensure stability in the model results, this process is repeated 3 times where different folds are used in each repetition.
+
+```{r, echo=FALSE}
+options(warn=-1)        #turn off package warnings
+
+#LOAD IN DATA
+main_dataset <- read.csv("pml-training.csv", na.strings = c("NA", "#DIV/0!"))
+
+#Remove New Window observations
+main_dataset <- subset(main_dataset, new_window == 'no')
+
+#Remove index, username and timestamp type fields
+main_dataset <- main_dataset[, 8:160]
+
+#To improve efficiency of analysis, removed zero / near-zero covariates
+library(caret)
+nsv <- nearZeroVar(main_dataset, saveMetrics=TRUE)
+main_dataset <- main_dataset[, nsv$zeroVar == 'FALSE']
+
+#Split training set into training / testing / validation using a 60 / 20 / 20 split
+#Split data set into training and test set
+set.seed(36)
+inTrain <- createDataPartition(y = main_dataset$classe, p = 0.6, list = FALSE)
+training <- main_dataset[inTrain,]
+testing_set <- main_dataset[-inTrain,]
+
+#Split test set into test and validation set
+set.seed(3636)
+inTest <- createDataPartition(y = testing_set$classe, p = 0.5, list = FALSE)
+testing <- testing_set[inTest, ]
+validation <- testing_set[-inTest, ]
+
+#Set cross validation technique: used K-folds cross validation where K = 5 and repeated 3 times
+ctrl <- trainControl(method = "repeatedcv",
+                     number = 5,
+                     repeats = 3)
+```
+
+MODELING: I attempted to model the data using various techiniques and I found that the tree based algorithms tended to outperform other techniques. Ultimately, the final model candidates choosen were the following algorithms: classification tree, bagging, random forest, GBM and an ensemble of the bagging, random forest and GBM models.
+
+* I compared the performance of various models via the accuracy and kappa metrics. I determined these metrics to be the most appropriate for model comparisons since in this analysis, we are predicting a multi-class categorical outcome.
+* I attempted modeling with Linear Discriminant Analysis and Naive Bayes but the accuracy of these models were poor compared to the tree based algorithms.
+* I also considered using Principal Components Analysis as a preprocessing technique but this caused a significant drop-off in accuracy.
+* I extended TuneLength for CART and Bagging models which significantly improved accuracy.
+* One noteworthy adjustment that I made on the model training was that I trained the random forest model on a smaller sample set as this modeling technique is computationally intensive. If the random forest model was trained on the full training set, the computation time would be extremely lenghty.
+
+```{r, echo=FALSE}
+#MODELING
+#Classification Tree
+set.seed(3636)
+cart <- train(classe ~ ., method="rpart",data=training, trControl = ctrl, tuneLength=30)
+pred_cart1 <- predict(cart, training)
+pred_cart <- predict(cart, testing)
+cm_cart <- confusionMatrix(pred_cart, testing$classe)
+
+#Bagging
+set.seed(3636)
+tree_bag <- train(classe ~ ., method="treebag", data=training, trControl = ctrl, tuneLength=30)
+pred_bag1 <- predict(tree_bag, training)
+pred_bag <- predict(tree_bag, testing)
+cm_bag <- confusionMatrix(pred_bag, testing$classe)
+
+#Random Forests
+#Because modeling with Random Forests is computationally intensive, I built the random forest algorithm
+#on a smaller training set to speed up computations.
+set.seed(36)
+inTrainRF <- createDataPartition(y = training$classe, p = 0.25, list = FALSE)
+training_rf <- training[inTrainRF,]
+set.seed(3636)
+rand_for <- train(classe ~ ., data = training_rf, method = "rf", prox = TRUE, trControl = ctrl,
+                     allowParellel = TRUE)
+pred_rf1 <- predict(rand_for, training)
+pred_rf <- predict(rand_for, testing)
+cm_rf <- confusionMatrix(pred_rf, testing$classe)
+
+#GBM
+set.seed(3636)
+mod_gbm <- train(classe ~ ., method="gbm", data=training,verbose=FALSE, trControl = ctrl)
+pred_gbm1 <- predict(mod_gbm, training)
+pred_gbm <- predict(mod_gbm, testing)
+cm_gbm <- confusionMatrix(pred_gbm, testing$classe)
+
+#Ensembling
+ensDF <- data.frame(bag = pred_bag1, rf = pred_rf1, gbm = pred_gbm1, classe = training$classe)
+set.seed(63)
+modelFit_ens <- train(classe ~ ., method = "treebag", data = ensDF, trControl = ctrl, tuneLength = 30)
+ensDF_test <- data.frame(bag = pred_bag, rf = pred_rf, gbm = pred_gbm)
+pred_ens <- predict(modelFit_ens, ensDF_test)
+cm_ens <- confusionMatrix(pred_ens, testing$classe)
+
+```
+
+MODEL RESULTS ON THE TESTING SET USING ACCURACY AND KAPPA METRICS:
+```{r, echo=FALSE}
+library(dplyr)
+#ACCURACY METRICS ON THE TESTING SET
+#CLASSIFICATION TREE
+cart_acc <- cm_cart$overall[1:2]
+#BAGGING
+bag_acc <- cm_bag$overall[1:2]
+#RANDOM FOREST
+rf_acc <- cm_rf$overall[1:2]
+#GBM
+gbm_acc <- cm_gbm$overall[1:2]
+#ENSEMBLE
+ens_acc <- cm_ens$overall[1:2]
+
+acc <- rbind(cart_acc, bag_acc, rf_acc, gbm_acc, ens_acc)
+rownames(acc) <- c("RPART", "BAGGING", "RANDOM FOREST", "GBM", "ENSEMBLE")
+acc
+
+```
+
+TESTING RESULTS: Out of the non-ensemble models, the bagging model performed the best on the testing set. Moreover, the ensemble model accuracy was equivalent to that of the bagging model implying that it may not be worthwhile to combine the different model candidates. Hence, based on the accuracy and kappa metrics, I recommend using the bagging model to predict exercise technique.
+
+EXPECTED OUT-OF-SAMPLE ERROR RATE: As a last step, I calculated the expected out-of-sample error rate by applying the bagging model to the validation set:
+
+```{r, echo=FALSE}
+pred_bag_val <- predict(tree_bag, validation)
+cm_bag_val <- confusionMatrix(pred_bag_val, validation$classe)
+```
+
+```{r}
+#ERROR RATE IS CALCULATED AS 1 MINUS ACCURACY / KAPPA
+1 - cm_bag_val$overall[1:2]
+```
+
+POST EXPLORATORY DATA ANALYSIS: According to the bagging model, the variables roll_belt, yaw_belt, pitch_forarm and pitch_belt are the most predictive of classe. A post exploratory data analysis was performed to demonstrate the effectiveness of these variables in determining exercise technique:
+
+
+```{r, echo=FALSE}
+g <- ggplot(training, aes(roll_belt, yaw_belt, col = classe))
+g <- g + geom_point(alpha = 1/3)
+
+gg <- ggplot(training, aes(pitch_forearm, pitch_belt, col = classe))
+gg <- gg + geom_point(alpha = 1/3)
+
+par(mfrow = c(1, 2))
+g
+gg
+```
