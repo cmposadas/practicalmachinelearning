@@ -34,8 +34,9 @@ FEATURES: Before I initialized the model algorithms, I did some basic feature ma
 
 DATA PARTITION: The dataset was also split into a training, testing and validation set via a 60 / 20 / 20 split -- I determined that the dataset was large enough to accommodate both a testing and validation set (ie: the dataset contains almost 20,000 records).
 
-CROSS VALIDATION: The cross validation technique I will be using is K-folds where K = 5 and is repeated 3 times. 
+CROSS VALIDATION: I will use cross validation in the model building and selection process as this will help gauge what the out-of-sample error rate will be for each model candidate. However, since cross validation, as well as the testing set, are being used to help build and select the final model, I will apply the final model to an independent holdout set (ie: the validation set) to get a true estimate of the out-of-sample error rate. 
 
+* The cross validation technique I will be using is K-folds where K = 5 and is repeated 3 times.
 * The advantage of using the K-folds cross validation technique is that every single observation in the training set will be used for both training and validation. 
 * While the default number of folds to use in this CV technique is 10, I used 5 since the dataset is relatively large and using less folds should speed up the model computations and also, since the dataset is large, the model results should still be quite stable. 
 * Lastly, to ensure stability in the model results, this process is repeated 3 times where different folds are used in each repetition.
@@ -76,13 +77,14 @@ ctrl <- trainControl(method = "repeatedcv",
                      repeats = 3)
 ```
 
-MODELING: I attempted to model the data using various techiniques and I found that the tree based algorithms tended to outperform other techniques. Ultimately, the final model candidates choosen were the following algorithms: classification tree, bagging, random forest, GBM and an ensemble of the bagging, random forest and GBM models.
+MODELING PROCESS: I attempted to model the data using various techiniques and I found that the tree based algorithms tended to outperform other techniques. Ultimately, the final model candidates I compared were the following algorithms: classification tree, bagging, random forest, GBM and an ensemble of the bagging, random forest and GBM models.
 
 * I compared the performance of various models via the accuracy and kappa metrics. I determined these metrics to be the most appropriate for model comparisons since in this analysis, we are predicting a multi-class categorical outcome.
 * I attempted modeling with Linear Discriminant Analysis and Naive Bayes but the accuracy of these models were poor compared to the tree based algorithms.
 * I also considered using Principal Components Analysis as a preprocessing technique but this caused a significant drop-off in accuracy.
 * I extended TuneLength for CART and Bagging models which significantly improved accuracy.
 * One noteworthy adjustment that I made on the model training was that I trained the random forest model on a smaller sample set as this modeling technique is computationally intensive. If the random forest model was trained on the full training set, the computation time would be extremely lenghty.
+* Ultimately, I applied the model candidates to the testing set and selected the model which displayed the highest accuracy and kappa metric values on the testing set.
 
 ```{r, echo=FALSE}
 #MODELING
@@ -153,7 +155,7 @@ acc
 
 TESTING RESULTS: Out of the non-ensemble models, the bagging model performed the best on the testing set. Moreover, the ensemble model accuracy was equivalent to that of the bagging model implying that it may not be worthwhile to combine the different model candidates. Hence, based on the accuracy and kappa metrics, I recommend using the bagging model to predict exercise technique.
 
-EXPECTED OUT-OF-SAMPLE ERROR RATE: As a last step, I calculated the expected out-of-sample error rate by applying the bagging model to the validation set:
+EXPECTED OUT-OF-SAMPLE ERROR RATE: To get an unbiased estimate of the out-of-sample error rate, the bagging model should be applied to an independent data set that was not used in the model selection process. Hence, as a last step, I calculated the expected out-of-sample error rate by applying the bagging model to the validation set:
 
 ```{r, echo=FALSE}
 pred_bag_val <- predict(tree_bag, validation)
@@ -164,6 +166,9 @@ cm_bag_val <- confusionMatrix(pred_bag_val, validation$classe)
 #ERROR RATE IS CALCULATED AS 1 MINUS ACCURACY / KAPPA
 1 - cm_bag_val$overall[1:2]
 ```
+
+Appendix
+========================================================
 
 POST EXPLORATORY DATA ANALYSIS: According to the bagging model, the variables roll_belt, yaw_belt, pitch_forarm and pitch_belt are the most predictive of classe. A post exploratory data analysis was performed to demonstrate the effectiveness of these variables in determining exercise technique:
 
